@@ -1,10 +1,21 @@
+# 1. تحميل سكربت الفلاتر المساعد أولاً
+ruby_helper_path = File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
+load ruby_helper_path if File.exist?(ruby_helper_path)
+
 platform :ios, '13.0'
+
+# 2. تجهيز إعدادات الفلاتر
+prepare_react_native_project_do_not_repository_or_delete rescue nil
 
 target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
 end
 
 post_install do |installer|
