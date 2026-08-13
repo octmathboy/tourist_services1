@@ -6,7 +6,7 @@ on:
 
 jobs:
   build-ipa:
-    runs-on: macos-13
+    runs-on: macos-latest
 
     steps:
     - name: Checkout Code
