@@ -1,14 +1,28 @@
-# 1. تحميل سكربت الفلاتر المساعد أولاً
-ruby_helper_path = File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
-load ruby_helper_path if File.exist?(ruby_helper_path)
+# 1. تحديد مسار سكربت الفلاتر المساعد
+flutter_ios_podfile_setup = File.join(File.dirname(File.realpath(__FILE__)), '.symlinks', 'plugins')
+
+# 2. تحميل إعدادات الفلاتر الأساسية
+def flutter_root
+  generated_xcode_properties = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_properties)
+    raise "#{generated_xcode_properties} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+  end
+
+  File.foreach(generated_xcode_properties) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_properties}. Try deleting Generated.xcconfig and running flutter pub get"
+end
+
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
 
 platform :ios, '13.0'
 
-# 2. تجهيز إعدادات الفلاتر
 prepare_react_native_project_do_not_repository_or_delete rescue nil
 
 target 'Runner' do
-  use_frameworks!
+  use_frameworks! :linkage => :static
   use_modular_headers!
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
