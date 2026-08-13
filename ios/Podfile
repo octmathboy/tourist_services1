@@ -1,12 +1,7 @@
-# 1. تحديد مسار السكربت المساعد للفلاتر
-ruby_helper_path = File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
-load ruby_helper_path if File.exist?(ruby_helper_path)
+podhelper_path = File.join(File.dirname(File.realpath(__FILE__)), 'Flutter', 'podhelper.rb')
+load podhelper_path if File.exist?(podhelper_path)
 
-# 2. تحديد الحد الأدنى لنظام iOS
 platform :ios, '13.0'
-
-# 3. تعطيل استدعاء الموديلات الخارجية التي قد تسبب تعارضات
-prepare_react_native_project_do_not_repository_or_delete rescue nil
 
 target 'Runner' do
   use_frameworks! :linkage => :static
@@ -19,7 +14,6 @@ target 'Runner' do
   end
 end
 
-# 4. إجبار كل مكتبة مضافة (Pods) على الاعتماد على iOS 13.0 كحد أدنى
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
