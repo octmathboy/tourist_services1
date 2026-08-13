@@ -24,16 +24,8 @@ jobs:
         flutter-version: '3.x'
         channel: 'stable'
 
-    - name: Disable Swift Package Manager for iOS
-      run: flutter config --no-swift-package-manager
-
     - name: Install Dependencies
       run: flutter pub get
-
-    - name: Install CocoaPods
-      run: |
-        cd ios
-        pod install --repo-update
 
     - name: Build iOS App
       run: flutter build ios --release --no-codesign
