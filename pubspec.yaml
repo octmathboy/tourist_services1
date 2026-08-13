@@ -1,0 +1,37 @@
+name: tourist_services1
+description: A comprehensive AI-powered tourist companion platform.
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  google_generative_ai: ^0.4.7
+  geolocator: ^13.0.2
+  geocoding: ^3.0.0
+  google_maps_flutter: ^2.10.0
+  flutter_localizations:
+    sdk: flutter
+
+  flutter_map: ^7.0.2
+  http: ^1.2.0
+  latlong2: ^0.9.1
+  url_launcher: ^6.3.1
+  firebase_core: ^4.7.0
+  cloud_firestore: ^6.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/icons/
