@@ -1,3 +1,4 @@
+# 1. تحميل السكربت المساعد بالمسار الصحيح المباشر
 podhelper_path = File.join(File.dirname(File.realpath(__FILE__)), 'Flutter', 'podhelper.rb')
 load podhelper_path if File.exist?(podhelper_path)
 
