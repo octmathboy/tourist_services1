@@ -1,5 +1,4 @@
 name: Build iOS IPA
-
 on:
   push:
     branches: [ main ]
@@ -8,7 +7,6 @@ on:
 jobs:
   build-ipa:
     runs-on: macos-15
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -40,11 +38,32 @@ jobs:
           rm -f Podfile.lock
           pod install --repo-update
 
-      - name: Build Unsigned IPA
-        run: flutter build ipa --no-codesign
+      - name: Build Unsigned iOS App
+        run: flutter build ios --release --no-codesign
+
+      - name: Manually Package IPA
+        run: |
+          set -e
+          BUILD_DIR="build/ios/iphoneos"
+          PAYLOAD_DIR="Payload"
+
+          if [ ! -d "$BUILD_DIR/Runner.app" ]; then
+            echo "Runner.app not found at $BUILD_DIR/Runner.app"
+            exit 1
+          fi
+
+          mkdir -p "$PAYLOAD_DIR"
+          cp -R "$BUILD_DIR/Runner.app" "$PAYLOAD_DIR/"
+
+          mkdir -p build/ios/ipa
+          zip -r -y "build/ios/ipa/tourist_services.ipa" "$PAYLOAD_DIR"
+
+          echo "IPA created:"
+          ls -lh build/ios/ipa/
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-ipa
-          path: build/ios/ipa/*.ipa
+          path: build/ios/ipa/tourist_services.ipa
+          if-no-files-found: error
