@@ -10,6 +10,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+    uses-material-design: true
+    pub:
+      enable-swift-package-manager: false
   google_generative_ai: ^0.4.7
   geolocator: ^13.0.2
   geocoding: ^3.0.0
