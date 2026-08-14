@@ -29,7 +29,9 @@ jobs:
         run: flutter pub get
 
       - name: Build Unsigned IPA
-        run: flutter build ipa --no-codesign --no-swift-package-manager
+        env:
+          FLUTTER_SUPPRESS_SWIFT_PACKAGE_MANAGER: "true"
+        run: flutter build ipa --no-codesign
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
