@@ -45,5 +45,21 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+
+	<!-- 📍 Location Permissions for geolocator -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app needs access to your location to find nearby places and calculate distances.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app needs access to your location to show nearby tourist services and landmarks.</string>
+
+	<!-- 🔗 External URL Schemes for url_launcher (Maps & Phone Calls) -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>https</string>
+		<string>http</string>
+		<string>tel</string>
+		<string>geo</string>
+		<string>comgooglemaps</string>
+	</array>
 </dict>
 </plist>
