@@ -1,6 +1,8 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../constants/app_colors.dart';
 import '../../constants/app_strings.dart';
 
@@ -12,8 +14,65 @@ class ServicesScreen extends StatefulWidget {
 }
 
 class _ServicesScreenState extends State<ServicesScreen> {
+  // Dynamic user coordinates
+  double? userLat;
+  double? userLng;
+  bool _isLoadingLocation = true;
 
-  // Phone dialer trigger
+  @override
+  void initState() {
+    super.initState();
+    _initUserLocation();
+  }
+
+  /// Request location access and get coordinates
+  Future<void> _initUserLocation() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) setState(() => _isLoadingLocation = false);
+      return;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        if (mounted) setState(() => _isLoadingLocation = false);
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      if (mounted) setState(() => _isLoadingLocation = false);
+      return;
+    }
+
+    final position = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.high,
+    );
+
+    if (mounted) {
+      setState(() {
+        userLat = position.latitude;
+        userLng = position.longitude;
+        _isLoadingLocation = false;
+      });
+    }
+  }
+
+  /// Calculate distance in kilometers
+  double _calculateDistanceKm(double lat2, double lng2) {
+    if (userLat == null || userLng == null || (lat2 == 0.0 && lng2 == 0.0)) {
+      return 0.0;
+    }
+    var p = 0.017453292519943295;
+    var c = cos;
+    var a = 0.5 -
+        c((lat2 - userLat!) * p) / 2 +
+        c(userLat! * p) * c(lat2 * p) * (1 - c((lng2 - userLng!) * p)) / 2;
+    return 12742 * asin(sqrt(a));
+  }
+
   Future<void> _makePhoneCall(String phoneNumber) async {
     final Uri launchUri = Uri(scheme: 'tel', path: phoneNumber);
     if (await canLaunchUrl(launchUri)) {
@@ -21,7 +80,6 @@ class _ServicesScreenState extends State<ServicesScreen> {
     }
   }
 
-  // Google Maps navigation trigger
   Future<void> _openMapLocation(double lat, double lng) async {
     final Uri googleMapsUrl =
         Uri.parse("https://www.google.com/maps/search/?api=1&query=$lat,$lng");
@@ -30,7 +88,6 @@ class _ServicesScreenState extends State<ServicesScreen> {
     }
   }
 
-  // Image preview modal
   void _showImagePreview(BuildContext context, String imageUrl) {
     if (imageUrl.isEmpty) return;
     showDialog(
@@ -40,7 +97,7 @@ class _ServicesScreenState extends State<ServicesScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Image.network(
-              imageUrl, 
+              imageUrl,
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) =>
                   const Icon(Icons.broken_image, size: 80),
@@ -55,7 +112,6 @@ class _ServicesScreenState extends State<ServicesScreen> {
     );
   }
 
-  // Fetch and display services per category
   void _showServicesBottomSheet(
       BuildContext context, String categoryTitle, String categoryKey) {
     showModalBottomSheet(
@@ -97,8 +153,6 @@ class _ServicesScreenState extends State<ServicesScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  
-                  // Firestore real-time listener
                   Expanded(
                     child: StreamBuilder<QuerySnapshot>(
                       stream: FirebaseFirestore.instance
@@ -106,8 +160,10 @@ class _ServicesScreenState extends State<ServicesScreen> {
                           .where('category', isEqualTo: categoryKey)
                           .snapshots(),
                       builder: (context, snapshot) {
-                        if (snapshot.connectionState == ConnectionState.waiting) {
-                          return const Center(child: CircularProgressIndicator());
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                              child: CircularProgressIndicator());
                         }
 
                         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
@@ -119,25 +175,72 @@ class _ServicesScreenState extends State<ServicesScreen> {
                           );
                         }
 
-                        final docs = snapshot.data!.docs;
+                        final rawDocs = snapshot.data!.docs;
+
+                        // Filter: distance <= 50 km
+                        final docs = rawDocs.where((doc) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          final double lat =
+                              (data['lat'] as num?)?.toDouble() ?? 0.0;
+                          final double lng =
+                              (data['lng'] as num?)?.toDouble() ?? 0.0;
+                          return userLat == null ||
+                              _calculateDistanceKm(lat, lng) <= 50.0;
+                        }).toList();
+
+                        // Sort: nearest to farthest
+                        docs.sort((a, b) {
+                          final dataA = a.data() as Map<String, dynamic>;
+                          final dataB = b.data() as Map<String, dynamic>;
+                          final double latA =
+                              (dataA['lat'] as num?)?.toDouble() ?? 0.0;
+                          final double lngA =
+                              (dataA['lng'] as num?)?.toDouble() ?? 0.0;
+                          final double latB =
+                              (dataB['lat'] as num?)?.toDouble() ?? 0.0;
+                          final double lngB =
+                              (dataB['lng'] as num?)?.toDouble() ?? 0.0;
+
+                          return _calculateDistanceKm(latA, lngA)
+                              .compareTo(_calculateDistanceKm(latB, lngB));
+                        });
+
+                        if (docs.isEmpty) {
+                          return const Center(
+                            child: Text(
+                              "No services within 50 km.",
+                              style: TextStyle(fontSize: 16),
+                            ),
+                          );
+                        }
 
                         return ListView.builder(
                           controller: controller,
                           itemCount: docs.length,
                           itemBuilder: (context, index) {
-                            final data = docs[index].data() as Map<String, dynamic>;
+                            final data =
+                                docs[index].data() as Map<String, dynamic>;
 
-                            final String name = data['name'] ?? 'Unnamed Service';
+                            final String name =
+                                data['name'] ?? 'Unnamed Service';
                             final String address = data['address'] ?? '';
                             final String phone = data['phone'] ?? '';
-                            final String description = data['description'] ?? '';
-                            final double lat = (data['lat'] as num?)?.toDouble() ?? 0.0;
-                            final double lng = (data['lng'] as num?)?.toDouble() ?? 0.0;
+                            final String description =
+                                data['description'] ?? '';
+                            final double lat =
+                                (data['lat'] as num?)?.toDouble() ?? 0.0;
+                            final double lng =
+                                (data['lng'] as num?)?.toDouble() ?? 0.0;
 
                             final List images = data['images'] ?? [];
-                            final String primaryImg = images.isNotEmpty ? images[0] : '';
-                            final String secondaryImg = images.length > 1 ? images[1] : '';
-                            final String tertiaryImg = images.length > 2 ? images[2] : '';
+                            final String primaryImg =
+                                images.isNotEmpty ? images[0] : '';
+                            final String secondaryImg =
+                                images.length > 1 ? images[1] : '';
+                            final String tertiaryImg =
+                                images.length > 2 ? images[2] : '';
+
+                            final distKm = _calculateDistanceKm(lat, lng);
 
                             return Card(
                               margin: const EdgeInsets.symmetric(vertical: 10),
@@ -158,8 +261,6 @@ class _ServicesScreenState extends State<ServicesScreen> {
                                       ),
                                     ),
                                     const SizedBox(height: 12),
-
-                                    // Uploaded Photos Layout
                                     if (primaryImg.isNotEmpty)
                                       SizedBox(
                                         height: 180,
@@ -168,24 +269,30 @@ class _ServicesScreenState extends State<ServicesScreen> {
                                             Expanded(
                                               flex: 3,
                                               child: GestureDetector(
-                                                onTap: () => _showImagePreview(context, primaryImg),
+                                                onTap: () => _showImagePreview(
+                                                    context, primaryImg),
                                                 child: ClipRRect(
-                                                  borderRadius: BorderRadius.circular(12),
+                                                  borderRadius:
+                                                      BorderRadius.circular(12),
                                                   child: Image.network(
                                                     primaryImg,
                                                     height: double.infinity,
                                                     fit: BoxFit.cover,
-                                                    errorBuilder: (c, e, s) => Container(
+                                                    errorBuilder: (c, e, s) =>
+                                                        Container(
                                                       color: Colors.grey[300],
-                                                      child: const Icon(Icons.broken_image),
+                                                      child: const Icon(
+                                                          Icons.broken_image),
                                                     ),
                                                   ),
                                                 ),
                                               ),
                                             ),
-                                            if (secondaryImg.isNotEmpty || tertiaryImg.isNotEmpty)
+                                            if (secondaryImg.isNotEmpty ||
+                                                tertiaryImg.isNotEmpty)
                                               const SizedBox(width: 8),
-                                            if (secondaryImg.isNotEmpty || tertiaryImg.isNotEmpty)
+                                            if (secondaryImg.isNotEmpty ||
+                                                tertiaryImg.isNotEmpty)
                                               Expanded(
                                                 flex: 2,
                                                 child: Column(
@@ -193,28 +300,46 @@ class _ServicesScreenState extends State<ServicesScreen> {
                                                     if (secondaryImg.isNotEmpty)
                                                       Expanded(
                                                         child: GestureDetector(
-                                                          onTap: () => _showImagePreview(context, secondaryImg),
+                                                          onTap: () =>
+                                                              _showImagePreview(
+                                                                  context,
+                                                                  secondaryImg),
                                                           child: ClipRRect(
-                                                            borderRadius: BorderRadius.circular(10),
-                                                            child: Image.network(
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        10),
+                                                            child:
+                                                                Image.network(
                                                               secondaryImg,
-                                                              width: double.infinity,
+                                                              width: double
+                                                                  .infinity,
                                                               fit: BoxFit.cover,
                                                             ),
                                                           ),
                                                         ),
                                                       ),
-                                                    if (secondaryImg.isNotEmpty && tertiaryImg.isNotEmpty)
+                                                    if (secondaryImg
+                                                            .isNotEmpty &&
+                                                        tertiaryImg.isNotEmpty)
                                                       const SizedBox(height: 6),
                                                     if (tertiaryImg.isNotEmpty)
                                                       Expanded(
                                                         child: GestureDetector(
-                                                          onTap: () => _showImagePreview(context, tertiaryImg),
+                                                          onTap: () =>
+                                                              _showImagePreview(
+                                                                  context,
+                                                                  tertiaryImg),
                                                           child: ClipRRect(
-                                                            borderRadius: BorderRadius.circular(10),
-                                                            child: Image.network(
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        10),
+                                                            child:
+                                                                Image.network(
                                                               tertiaryImg,
-                                                              width: double.infinity,
+                                                              width: double
+                                                                  .infinity,
                                                               fit: BoxFit.cover,
                                                             ),
                                                           ),
@@ -226,26 +351,32 @@ class _ServicesScreenState extends State<ServicesScreen> {
                                           ],
                                         ),
                                       ),
-
                                     const SizedBox(height: 12),
                                     if (description.isNotEmpty)
                                       Text(
                                         description,
-                                        style: TextStyle(color: Colors.grey[800], fontSize: 14),
+                                        style: TextStyle(
+                                            color: Colors.grey[800],
+                                            fontSize: 14),
                                       ),
                                     const SizedBox(height: 6),
-                                    Text("📍 $address",
-                                        style: TextStyle(color: Colors.grey[700], fontSize: 13)),
-
+                                    Text(
+                                        userLat != null
+                                            ? "📍 $address (${distKm.toStringAsFixed(1)} km away)"
+                                            : "📍 $address",
+                                        style: TextStyle(
+                                            color: Colors.grey[700],
+                                            fontSize: 13)),
                                     const SizedBox(height: 12),
-
                                     Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceEvenly,
                                       children: [
                                         if (phone.isNotEmpty)
                                           Expanded(
                                             child: OutlinedButton.icon(
-                                              onPressed: () => _makePhoneCall(phone),
+                                              onPressed: () =>
+                                                  _makePhoneCall(phone),
                                               icon: const Icon(Icons.phone),
                                               label: const Text("Call"),
                                             ),
@@ -254,7 +385,8 @@ class _ServicesScreenState extends State<ServicesScreen> {
                                           const SizedBox(width: 10),
                                         Expanded(
                                           child: ElevatedButton.icon(
-                                            onPressed: () => _openMapLocation(lat, lng),
+                                            onPressed: () =>
+                                                _openMapLocation(lat, lng),
                                             icon: const Icon(Icons.directions),
                                             label: const Text("Location"),
                                             style: ElevatedButton.styleFrom(
@@ -285,6 +417,14 @@ class _ServicesScreenState extends State<ServicesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoadingLocation) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: Colors.teal),
+        ),
+      );
+    }
+
     return Scaffold(
       body: SafeArea(
         child: Padding(

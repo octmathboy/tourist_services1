@@ -1,6 +1,8 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../constants/app_colors.dart';
 
 class WorshipScreen extends StatefulWidget {
@@ -15,10 +17,16 @@ class _WorshipScreenState extends State<WorshipScreen>
   late TabController _tabController;
   String _searchQuery = '';
 
+  // Dynamic user coordinates
+  double? userLat;
+  double? userLng;
+  bool _isLoadingLocation = true;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _initUserLocation();
   }
 
   @override
@@ -27,7 +35,54 @@ class _WorshipScreenState extends State<WorshipScreen>
     super.dispose();
   }
 
-  // Phone dialer launcher
+  /// Request permission and fetch live device location
+  Future<void> _initUserLocation() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) setState(() => _isLoadingLocation = false);
+      return;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        if (mounted) setState(() => _isLoadingLocation = false);
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      if (mounted) setState(() => _isLoadingLocation = false);
+      return;
+    }
+
+    final position = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.high,
+    );
+
+    if (mounted) {
+      setState(() {
+        userLat = position.latitude;
+        userLng = position.longitude;
+        _isLoadingLocation = false;
+      });
+    }
+  }
+
+  /// Calculate distance in kilometers using real coordinates
+  double _calculateDistanceKm(double lat2, double lng2) {
+    if (userLat == null || userLng == null || (lat2 == 0.0 && lng2 == 0.0)) {
+      return 0.0;
+    }
+    var p = 0.017453292519943295;
+    var c = cos;
+    var a = 0.5 -
+        c((lat2 - userLat!) * p) / 2 +
+        c(userLat! * p) * c(lat2 * p) * (1 - c((lng2 - userLng!) * p)) / 2;
+    return 12742 * asin(sqrt(a));
+  }
+
   Future<void> _makePhoneCall(String phoneNumber) async {
     final Uri launchUri = Uri(scheme: 'tel', path: phoneNumber);
     if (await canLaunchUrl(launchUri)) {
@@ -35,7 +90,6 @@ class _WorshipScreenState extends State<WorshipScreen>
     }
   }
 
-  // Google Maps navigation launcher
   Future<void> _openMapLocation(double lat, double lng) async {
     final Uri googleMapsUrl =
         Uri.parse("https://www.google.com/maps/search/?api=1&query=$lat,$lng");
@@ -44,7 +98,6 @@ class _WorshipScreenState extends State<WorshipScreen>
     }
   }
 
-  // Image preview modal
   void _showImagePreview(BuildContext context, String imageUrl) {
     if (imageUrl.isEmpty) return;
     showDialog(
@@ -74,18 +127,19 @@ class _WorshipScreenState extends State<WorshipScreen>
           return const Center(child: CircularProgressIndicator());
         }
 
-        final docs = snapshot.data?.docs ?? [];
+        final rawDocs = snapshot.data?.docs ?? [];
 
-        // Filter by tab type (Islamic vs Christian) and search query
-        final filteredDocs = docs.where((doc) {
+        // 1. Filter by tab type, search query, and distance <= 50 km
+        final filteredDocs = rawDocs.where((doc) {
           final data = doc.data() as Map<String, dynamic>;
           final String name = (data['name'] ?? '').toString().toLowerCase();
           final String address =
               (data['address'] ?? '').toString().toLowerCase();
           final String subcategory =
               (data['subcategory'] ?? '').toString().toLowerCase();
+          final double lat = (data['lat'] as num?)?.toDouble() ?? 0.0;
+          final double lng = (data['lng'] as num?)?.toDouble() ?? 0.0;
 
-          // Check tab type matching
           bool matchesType = false;
           if (type == 'islamic') {
             matchesType = subcategory == 'islamic' ||
@@ -102,13 +156,30 @@ class _WorshipScreenState extends State<WorshipScreen>
                 address.contains('church');
           }
 
-          // Search query matching
           bool matchesSearch = _searchQuery.isEmpty ||
               name.contains(_searchQuery) ||
               address.contains(_searchQuery);
 
-          return matchesType && matchesSearch;
+          double dist = _calculateDistanceKm(lat, lng);
+
+          // If location isn't fetched yet or within 50km
+          bool isWithinRange = (userLat == null) ? true : (dist <= 50.0);
+
+          return matchesType && matchesSearch && isWithinRange;
         }).toList();
+
+        // 2. Sort from nearest to farthest
+        filteredDocs.sort((a, b) {
+          final dataA = a.data() as Map<String, dynamic>;
+          final dataB = b.data() as Map<String, dynamic>;
+          final double latA = (dataA['lat'] as num?)?.toDouble() ?? 0.0;
+          final double lngA = (dataA['lng'] as num?)?.toDouble() ?? 0.0;
+          final double latB = (dataB['lat'] as num?)?.toDouble() ?? 0.0;
+          final double lngB = (dataB['lng'] as num?)?.toDouble() ?? 0.0;
+
+          return _calculateDistanceKm(latA, lngA)
+              .compareTo(_calculateDistanceKm(latB, lngB));
+        });
 
         if (filteredDocs.isEmpty) {
           return Center(
@@ -123,8 +194,8 @@ class _WorshipScreenState extends State<WorshipScreen>
                 const SizedBox(height: 12),
                 Text(
                   type == 'islamic'
-                      ? 'No Islamic places found.'
-                      : 'No Christian places found.',
+                      ? 'No Islamic places within 50km.'
+                      : 'No Christian places within 50km.',
                   style: const TextStyle(color: Colors.grey, fontSize: 16),
                 ),
               ],
@@ -142,10 +213,12 @@ class _WorshipScreenState extends State<WorshipScreen>
                 data['name'] ?? (type == 'islamic' ? 'Mosque' : 'Church');
             final String phone = data['phone'] ?? '';
             final String address = data['address'] ?? '';
-            final double? lat = (data['lat'] as num?)?.toDouble();
-            final double? lng = (data['lng'] as num?)?.toDouble();
+            final double lat = (data['lat'] as num?)?.toDouble() ?? 0.0;
+            final double lng = (data['lng'] as num?)?.toDouble() ?? 0.0;
             final List<dynamic> images = data['images'] ?? [];
             final String mainImage = images.isNotEmpty ? images.first : '';
+
+            final double distKm = _calculateDistanceKm(lat, lng);
 
             return Card(
               margin: const EdgeInsets.only(bottom: 12),
@@ -161,7 +234,6 @@ class _WorshipScreenState extends State<WorshipScreen>
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Image / Icon Thumbnail
                         GestureDetector(
                           onTap: () => _showImagePreview(context, mainImage),
                           child: Container(
@@ -193,8 +265,6 @@ class _WorshipScreenState extends State<WorshipScreen>
                           ),
                         ),
                         const SizedBox(width: 12),
-
-                        // Title & Details
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -217,14 +287,23 @@ class _WorshipScreenState extends State<WorshipScreen>
                                     fontSize: 13,
                                   ),
                                 ),
+                              const SizedBox(height: 4),
+                              Text(
+                                userLat != null
+                                    ? "📍 ${distKm.toStringAsFixed(1)} km away"
+                                    : "📍 Location unknown",
+                                style: const TextStyle(
+                                  color: Colors.teal,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ],
                           ),
                         ),
                       ],
                     ),
                     const Divider(height: 20),
-
-                    // Actions (Call & Navigate)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
@@ -241,7 +320,7 @@ class _WorshipScreenState extends State<WorshipScreen>
                           ),
                           const SizedBox(width: 8),
                         ],
-                        if (lat != null && lng != null) ...[
+                        if (lat != 0.0 && lng != 0.0) ...[
                           ElevatedButton.icon(
                             onPressed: () => _openMapLocation(lat, lng),
                             icon: const Icon(
@@ -275,6 +354,14 @@ class _WorshipScreenState extends State<WorshipScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoadingLocation) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: Colors.teal),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -296,7 +383,6 @@ class _WorshipScreenState extends State<WorshipScreen>
       ),
       body: Column(
         children: [
-          // Search Input Bar
           Padding(
             padding: const EdgeInsets.all(12.0),
             child: TextField(
@@ -318,8 +404,6 @@ class _WorshipScreenState extends State<WorshipScreen>
               ),
             ),
           ),
-
-          // Tab Views
           Expanded(
             child: TabBarView(
               controller: _tabController,
